@@ -1,0 +1,134 @@
+{
+  "protocol": "pytorch_task_v1",
+  "description": "Four neural-network tasks — MLP, Naive Bayes NN, Linear Regression NN, and Logistic Regression NN — each implemented in PyTorch with self-verifying exit codes.",
+  "tasks": [
+    {
+      "task_id": "task1_mlp",
+      "name": "Multi-Layer Perceptron (MLP) on MNIST",
+      "file": "task1_mlp.py",
+      "model": "MLP",
+      "description": "Three-hidden-layer fully-connected MLP (784→256→128→64→10) trained on MNIST handwritten digits. Uses ReLU activations, Dropout (0.2), Adam optimiser, and StepLR scheduler.",
+      "dataset": {
+        "name": "MNIST",
+        "source": "torchvision.datasets.MNIST",
+        "input_dim": 784,
+        "num_classes": 10,
+        "train_size": 60000,
+        "test_size": 10000
+      },
+      "hyperparameters": {
+        "epochs": 5,
+        "batch_size": 256,
+        "learning_rate": 0.001,
+        "optimizer": "Adam",
+        "scheduler": "StepLR(step_size=2, gamma=0.5)",
+        "dropout": 0.2
+      },
+      "pass_criteria": {
+        "metric": "test_accuracy",
+        "threshold": 0.95
+      },
+      "exit_codes": {
+        "0": "PASS — test accuracy >= 0.95",
+        "1": "FAIL — test accuracy < 0.95"
+      }
+    },
+    {
+      "task_id": "task2_naive_bayes_nn",
+      "name": "Naive Bayes as Neural Network on 20 Newsgroups",
+      "file": "task2_naive_bayes_nn.py",
+      "model": "NaiveBayesNN",
+      "description": "Naive Bayes expressed as a single linear layer whose weights represent learned log-likelihoods (kept non-negative via softplus re-parameterisation) and whose bias represents the learned log-prior. Trained on TF-IDF bag-of-words features from the 20 Newsgroups corpus using Adam + NLL loss, which recovers the MLE/MAP solution analytically computed by classical Naive Bayes.",
+      "dataset": {
+        "name": "20 Newsgroups",
+        "source": "sklearn.datasets.fetch_20newsgroups",
+        "features": "TF-IDF (top 10,000 vocabulary)",
+        "num_classes": 20,
+        "train_size": "~15,000",
+        "test_size": "~3,770"
+      },
+      "hyperparameters": {
+        "epochs": 20,
+        "batch_size": 128,
+        "learning_rate": 0.005,
+        "optimizer": "Adam",
+        "weight_decay": 0.0001,
+        "weight_constraint": "softplus (non-negative log-likelihoods)"
+      },
+      "pass_criteria": {
+        "metric": "test_accuracy",
+        "threshold": 0.70
+      },
+      "exit_codes": {
+        "0": "PASS — test accuracy >= 0.70",
+        "1": "FAIL — test accuracy < 0.70"
+      }
+    },
+    {
+      "task_id": "task3_linear_nn",
+      "name": "Linear Regression as Neural Network on California Housing",
+      "file": "task3_linear_nn.py",
+      "model": "LinearRegressionNN",
+      "description": "Ordinary least-squares linear regression expressed as a single nn.Linear layer (no activation). Trained with MSELoss and SGD + momentum + CosineAnnealingLR on the California Housing dataset (StandardScaler preprocessing). Recovers the OLS solution via gradient descent.",
+      "dataset": {
+        "name": "California Housing",
+        "source": "sklearn.datasets.fetch_california_housing",
+        "input_dim": 8,
+        "target": "Median house value (continuous)",
+        "train_size": "~16,512",
+        "test_size": "~4,128"
+      },
+      "hyperparameters": {
+        "epochs": 100,
+        "batch_size": 512,
+        "learning_rate": 0.01,
+        "momentum": 0.9,
+        "optimizer": "SGD",
+        "scheduler": "CosineAnnealingLR(T_max=100)"
+      },
+      "pass_criteria": {
+        "metric": "test_R2",
+        "threshold": 0.60
+      },
+      "exit_codes": {
+        "0": "PASS — test R² >= 0.60",
+        "1": "FAIL — test R² < 0.60"
+      }
+    },
+    {
+      "task_id": "task4_logistic_nn",
+      "name": "Logistic Regression as Neural Network on Breast Cancer Wisconsin",
+      "file": "task4_logistic_nn.py",
+      "model": "LogisticRegressionNN",
+      "description": "Binary logistic regression expressed as a single nn.Linear layer whose raw logits feed BCEWithLogitsLoss (numerically stable). L2 regularisation (weight_decay) implements the Ridge / MAP penalty. An additional non-triviality check ensures the model predicts both classes (not degenerate). Reports both accuracy and AUC-ROC.",
+      "dataset": {
+        "name": "Breast Cancer Wisconsin",
+        "source": "sklearn.datasets.load_breast_cancer",
+        "input_dim": 30,
+        "num_classes": 2,
+        "train_size": 455,
+        "test_size": 114
+      },
+      "hyperparameters": {
+        "epochs": 200,
+        "batch_size": 64,
+        "learning_rate": 0.001,
+        "optimizer": "Adam",
+        "weight_decay": 0.0001,
+        "scheduler": "ReduceLROnPlateau(patience=20, factor=0.5)"
+      },
+      "pass_criteria": {
+        "metric": ["test_accuracy", "AUC-ROC", "non_trivial_boundary"],
+        "threshold": {
+          "test_accuracy": 0.93,
+          "AUC-ROC": 0.97,
+          "non_trivial_boundary": "model predicts both classes (unique predictions == 2)"
+        }
+      },
+      "exit_codes": {
+        "0": "PASS — accuracy >= 0.93 AND AUC-ROC >= 0.97 AND both classes predicted",
+        "1": "FAIL — any criterion not met"
+      }
+    }
+  ]
+}
