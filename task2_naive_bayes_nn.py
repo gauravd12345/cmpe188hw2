@@ -5,8 +5,8 @@ Protocol: pytorch_task_v1
 
 Naive Bayes as a NN:
   • Log class-prior  → learnable bias on the output layer
-  • Log likelihoods  → learnable weight matrix (one row per class, one col per feature)
-  • Forward pass     → W @ x + b  (exactly the Naive Bayes log-posterior, unnormalised)
+  • Log likelihoods  → learnable weight matrix 
+  • Forward pass     → W @ x + b 
 """
 
 import sys
