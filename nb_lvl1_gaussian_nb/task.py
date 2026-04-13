@@ -4,24 +4,6 @@ series  : Naive Bayes
 level   : 1
 algorithm: Gaussian Naive Bayes (as a Neural Network)
 
-Description:
-    Implements Gaussian Naive Bayes from first principles in PyTorch,
-    expressed as a differentiable neural network layer. Parameters
-    (class means, log-variances, log-priors) are learned via gradient
-    descent on NLL loss. Compared against sklearn GaussianNB.
-
-Math:
-    Gaussian likelihood per feature f for class c:
-        p(x_f | c) = (1 / sqrt(2*pi*sigma^2_cf)) * exp(-(x_f - mu_cf)^2 / (2*sigma^2_cf))
-
-    Log-posterior (unnormalised):
-        log P(c | x) = log pi_c + sum_f log p(x_f | c)
-                     = log pi_c - 0.5 * sum_f [ log(2*pi) + log(sigma^2_cf) + (x_f-mu_cf)^2 / sigma^2_cf ]
-
-    Classification: argmax_c log P(c | x)
-
-    Accuracy within 3% of sklearn GaussianNB required.
-
 Protocol: pytorch_task_v1
 Entrypoint: python tasks/nb_lvl1_gaussian_nb/task.py
 """
@@ -46,16 +28,11 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# ── Module-level setup ─────────────────────────────────────────────────────────
 OUTPUT_DIR = 'tasks/nb_lvl1_gaussian_nb/artifacts'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
-# ─────────────────────────────────────────────
-#  1. Metadata
-# ─────────────────────────────────────────────
 def get_task_metadata() -> Dict[str, Any]:
     return {
         "task_id":    "nb_lvl1_gaussian_nb",
@@ -67,10 +44,6 @@ def get_task_metadata() -> Dict[str, Any]:
         "output_dir": OUTPUT_DIR,
     }
 
-
-# ─────────────────────────────────────────────
-#  2. Reproducibility
-# ─────────────────────────────────────────────
 def set_seed(seed: int = 42) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -78,17 +51,9 @@ def set_seed(seed: int = 42) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-
-# ─────────────────────────────────────────────
-#  3. Device
-# ─────────────────────────────────────────────
 def get_device() -> torch.device:
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
-# ─────────────────────────────────────────────
-#  4. Data
-# ─────────────────────────────────────────────
 def make_dataloaders(
     batch_size: int = 32,
     val_fraction: float = 0.15,
@@ -136,10 +101,6 @@ def make_dataloaders(
         'X_tv_raw': X_tv, 'y_tv': y_tv,
     }
 
-
-# ─────────────────────────────────────────────
-#  5. Model — Gaussian NB as NN with sklearn-style API
-# ─────────────────────────────────────────────
 class GaussianNBNN(nn.Module):
     """
     Gaussian Naive Bayes expressed as a differentiable module.
@@ -233,10 +194,6 @@ class GaussianNBNN(nn.Module):
 def build_model(num_features: int = 4, num_classes: int = 3) -> GaussianNBNN:
     return GaussianNBNN(num_features, num_classes)
 
-
-# ─────────────────────────────────────────────
-#  6. Train
-# ─────────────────────────────────────────────
 def train(
     model: GaussianNBNN,
     dataloaders: Dict[str, Any],
@@ -250,10 +207,6 @@ def train(
         epochs=epochs, lr=lr, verbose=verbose,
     )
 
-
-# ─────────────────────────────────────────────
-#  7. Evaluate
-# ─────────────────────────────────────────────
 def evaluate(model: GaussianNBNN, loader: DataLoader) -> Dict[str, float]:
     """
     Returns dict with keys: loss, accuracy, mse, r2.
@@ -288,17 +241,9 @@ def evaluate(model: GaussianNBNN, loader: DataLoader) -> Dict[str, float]:
 
     return {'loss': avg_loss, 'accuracy': accuracy, 'mse': mse, 'r2': r2}
 
-
-# ─────────────────────────────────────────────
-#  8. Predict
-# ─────────────────────────────────────────────
 def predict(model: GaussianNBNN, x) -> np.ndarray:
     return model.predict(x)
 
-
-# ─────────────────────────────────────────────
-#  9. Save artifacts
-# ─────────────────────────────────────────────
 def save_artifacts(
     model: GaussianNBNN,
     history: Dict[str, Any],
@@ -363,10 +308,6 @@ def save_artifacts(
 
     print(f"  Artifacts saved to {OUTPUT_DIR}/")
 
-
-# ─────────────────────────────────────────────
-#  Main
-# ─────────────────────────────────────────────
 if __name__ == '__main__':
     print('=' * 60)
     print('Gaussian Naive Bayes (NN) vs Sklearn — Iris Dataset')

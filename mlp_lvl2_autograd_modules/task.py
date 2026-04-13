@@ -4,10 +4,6 @@ series  : Neural Networks (MLP)
 level   : 2
 algorithm: MLP (nn.Module + Autograd)
 
-Description:
-    General MLP classifier with Dropout and BatchNorm trained on MNIST.
-    Uses torch.nn.Module + autograd (no manual gradient computation).
-
 Protocol: pytorch_task_v1
 Entrypoint: python tasks/mlp_lvl2_autograd_modules/task.py
 """
