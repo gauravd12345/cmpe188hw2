@@ -5,7 +5,6 @@ level   : 2
 algorithm: MLP (nn.Module + Autograd)
 
 Protocol: pytorch_task_v1
-Entrypoint: python tasks/mlp_lvl2_autograd_modules/task.py
 """
 
 import os

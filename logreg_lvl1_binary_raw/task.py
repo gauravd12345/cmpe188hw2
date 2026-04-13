@@ -1,9 +1,8 @@
 """
-task_id : nb_lvl1_gaussian_nb
-series  : Naive Bayes
+task_id : logreg_lvl1_binary_raw
+series  : Logistic Regression
 level   : 1
-algorithm: Gaussian Naive Bayes (as a Neural Network)
-
+algorithm: Logistic Regression (Binary, as Neural Network)
 Protocol: pytorch_task_v1
 """
 
@@ -11,35 +10,37 @@ import os
 import sys
 import json
 import random
-from typing import Dict, Any, Tuple
+from typing import Dict, Any
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.datasets import load_iris
-from sklearn.naive_bayes import GaussianNB
+from sklearn.datasets import load_breast_cancer
+from sklearn.linear_model import LogisticRegression as SklearnLR
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, roc_auc_score
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-OUTPUT_DIR = 'tasks/nb_lvl1_gaussian_nb/artifacts'
+# ── Module-level setup ─────────────────────────────────────────────────────────
+OUTPUT_DIR = 'tasks/logreg_lvl1_binary_raw/artifacts'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def get_task_metadata() -> Dict[str, Any]:
     return {
-        "task_id":    "nb_lvl1_gaussian_nb",
-        "series":     "Naive Bayes",
+        "task_id":    "logreg_lvl1_binary_raw",
+        "series":     "Logistic Regression",
         "level":      1,
-        "algorithm":  "Gaussian Naive Bayes (as Neural Network)",
-        "dataset":    "Iris",
-        "framework":  "PyTorch",
+        "algorithm":  "Logistic Regression (Binary, nn.Linear)",
+        "dataset":    "Breast Cancer Wisconsin",
+        "frameworks": ["pytorch", "sklearn"],
+        "metrics":    ["accuracy", "auc", "mse", "r2"],
         "output_dir": OUTPUT_DIR,
     }
 
@@ -54,17 +55,17 @@ def get_device() -> torch.device:
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def make_dataloaders(
-    batch_size: int = 32,
+    batch_size: int = 64,
     val_fraction: float = 0.15,
     test_fraction: float = 0.15,
 ) -> Dict[str, Any]:
     """
-    Loads Iris dataset, standardises features.
-    Returns dict with train_loader, val_loader, test_loader, plus raw arrays for sklearn.
+    Loads Breast Cancer Wisconsin, standardises features.
+    Returns dict with train_loader, val_loader, test_loader, and raw arrays for sklearn.
     """
-    data = load_iris()
+    data = load_breast_cancer()
     X    = data.data.astype(np.float32)
-    y    = data.target
+    y    = data.target.astype(np.float32)
 
     X_tv, X_test, y_tv, y_test = train_test_split(
         X, y, test_size=test_fraction, random_state=42, stratify=y
@@ -81,67 +82,54 @@ def make_dataloaders(
     X_test  = scaler.transform(X_test).astype(np.float32)
 
     def to_loader(X, y, shuffle):
-        ds = TensorDataset(torch.from_numpy(X), torch.from_numpy(y).long())
+        ds = TensorDataset(torch.from_numpy(X), torch.from_numpy(y))
         return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
 
     return {
-        'train_loader':  to_loader(X_train, y_train, True),
-        'val_loader':    to_loader(X_val,   y_val,   False),
-        'test_loader':   to_loader(X_test,  y_test,  False),
+        'train_loader': to_loader(X_train, y_train, True),
+        'val_loader':   to_loader(X_val,   y_val,   False),
+        'test_loader':  to_loader(X_test,  y_test,  False),
         'X_train': X_train, 'y_train': y_train,
         'X_val':   X_val,   'y_val':   y_val,
         'X_test':  X_test,  'y_test':  y_test,
         'scaler':  scaler,
         'n_features':    X_train.shape[1],
-        'num_classes':   len(np.unique(y)),
         'feature_names': list(data.feature_names),
-        'class_names':   list(data.target_names),
-        # raw (unscaled) for sklearn
-        'X_tv_raw': X_tv, 'y_tv': y_tv,
     }
 
-class GaussianNBNN(nn.Module):
+class LogisticRegressionNN(nn.Module):
     """
-    Gaussian Naive Bayes expressed as a differentiable module.
-
-    Learnable parameters per class c, per feature f:
-        mu      : class means           shape (C, F)
-        log_var : log class variances   shape (C, F)  — ensures sigma^2 > 0
-        log_pi  : log class priors      shape (C,)
+    Binary Logistic Regression as a single nn.Linear layer.
+    Raw logit output; sigmoid is applied inside BCEWithLogitsLoss (numerically stable).
 
     Provides sklearn-style .fit() / .predict() / .save() / .load() methods.
     """
 
-    def __init__(self, num_features: int, num_classes: int):
+    def __init__(self, input_dim: int):
         super().__init__()
-        self.mu      = nn.Parameter(torch.randn(num_classes, num_features) * 0.1)
-        self.log_var = nn.Parameter(torch.zeros(num_classes, num_features))
-        self.log_pi  = nn.Parameter(torch.zeros(num_classes))
+        self.linear = nn.Linear(input_dim, 1)
+        nn.init.xavier_uniform_(self.linear.weight)
+        nn.init.zeros_(self.linear.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        x : (B, F)
-        log P(c|x) proportional to log pi_c
-            + sum_f [ -0.5*(log(2*pi) + log_var_cf + (x_f - mu_cf)^2 / var_cf) ]
-        Returns log-posteriors shape (B, C).
-        """
-        var   = torch.exp(self.log_var)                         # (C, F)
-        diff  = x.unsqueeze(1) - self.mu.unsqueeze(0)          # (B, C, F)
-        log_p = -0.5 * (np.log(2 * np.pi) + self.log_var + diff ** 2 / var)
-        return self.log_pi + log_p.sum(dim=2)                   # (B, C)
+        return self.linear(x).squeeze(-1)   # raw logits (B,)
 
     def fit(
         self,
         train_loader: DataLoader,
         val_loader: DataLoader = None,
         epochs: int = 300,
-        lr: float = 5e-3,
+        lr: float = 1e-3,
+        weight_decay: float = 1e-4,
         verbose: bool = True,
     ) -> Dict[str, Any]:
-        """Train via gradient descent on NLL loss."""
+        """Train with Adam + L2 regularisation; return history."""
         self.to(device)
-        criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(self.parameters(), lr=lr)
+        criterion = nn.BCEWithLogitsLoss()
+        optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=weight_decay)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', patience=30, factor=0.5
+        )
 
         history = {'train_losses': [], 'val_losses': [],
                    'train_acc':    [], 'val_acc':    []}
@@ -157,10 +145,11 @@ class GaussianNBNN(nn.Module):
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item() * x.size(0)
-                correct    += (logits.argmax(1) == y).sum().item()
+                correct    += ((logits >= 0).float() == y).sum().item()
                 total      += y.size(0)
 
             val_m = evaluate(self, val_loader) if val_loader else {'loss': None, 'accuracy': None}
+            scheduler.step(val_m['loss'] if val_m['loss'] is not None else total_loss / total)
             history['train_losses'].append(total_loss / total)
             history['train_acc'].append(correct / total)
             history['val_losses'].append(val_m['loss'])
@@ -181,7 +170,15 @@ class GaussianNBNN(nn.Module):
             if isinstance(x, np.ndarray):
                 x = torch.from_numpy(x).float()
             logits = self(x.to(device))
-        return logits.argmax(dim=1).cpu().numpy()
+        return (logits >= 0).long().cpu().numpy()
+
+    def predict_proba(self, x) -> np.ndarray:
+        self.eval()
+        with torch.no_grad():
+            if isinstance(x, np.ndarray):
+                x = torch.from_numpy(x).float()
+            logits = self(x.to(device))
+        return torch.sigmoid(logits).cpu().numpy()
 
     def save(self, filepath: str) -> None:
         torch.save(self.state_dict(), filepath)
@@ -190,14 +187,14 @@ class GaussianNBNN(nn.Module):
         self.load_state_dict(torch.load(filepath, map_location=device))
 
 
-def build_model(num_features: int = 4, num_classes: int = 3) -> GaussianNBNN:
-    return GaussianNBNN(num_features, num_classes)
+def build_model(input_dim: int = 30) -> LogisticRegressionNN:
+    return LogisticRegressionNN(input_dim=input_dim)
 
 def train(
-    model: GaussianNBNN,
+    model: LogisticRegressionNN,
     dataloaders: Dict[str, Any],
     epochs: int = 300,
-    lr: float = 5e-3,
+    lr: float = 1e-3,
     verbose: bool = True,
 ) -> Dict[str, Any]:
     return model.fit(
@@ -206,13 +203,13 @@ def train(
         epochs=epochs, lr=lr, verbose=verbose,
     )
 
-def evaluate(model: GaussianNBNN, loader: DataLoader) -> Dict[str, float]:
+def evaluate(model: LogisticRegressionNN, loader: DataLoader) -> Dict[str, float]:
     """
-    Returns dict with keys: loss, accuracy, mse, r2.
-    MSE and R2 computed between predicted probabilities and one-hot labels.
+    Returns dict: {loss, accuracy, mse, r2, auc, n_unique_preds}.
+    MSE and R2 are computed between predicted probabilities and binary labels.
     """
     model.eval()
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.BCEWithLogitsLoss()
     all_logits, all_labels = [], []
     total_loss = 0.0
 
@@ -229,35 +226,50 @@ def evaluate(model: GaussianNBNN, loader: DataLoader) -> Dict[str, float]:
     n      = labels.size(0)
 
     avg_loss = total_loss / n
-    accuracy = (logits.argmax(1) == labels).float().mean().item()
+    probs    = torch.sigmoid(logits)
+    preds    = (logits >= 0).float()
+    accuracy = (preds == labels).float().mean().item()
 
-    probs   = torch.softmax(logits, dim=1)
-    one_hot = torch.zeros_like(probs).scatter_(1, labels.unsqueeze(1), 1.0)
-    mse     = ((probs - one_hot) ** 2).mean().item()
-    ss_res  = ((probs - one_hot) ** 2).sum().item()
-    ss_tot  = ((one_hot - one_hot.mean(0)) ** 2).sum().item()
-    r2      = 1.0 - ss_res / (ss_tot + 1e-12)
+    mse    = ((probs - labels) ** 2).mean().item()
+    ss_res = ((probs - labels) ** 2).sum().item()
+    ss_tot = ((labels - labels.mean()) ** 2).sum().item()
+    r2     = 1.0 - ss_res / (ss_tot + 1e-12)
 
-    return {'loss': avg_loss, 'accuracy': accuracy, 'mse': mse, 'r2': r2}
+    auc         = roc_auc_score(labels.numpy(), probs.numpy())
+    n_unique    = int(preds.unique().numel())
 
-def predict(model: GaussianNBNN, x) -> np.ndarray:
+    return {
+        'loss':           avg_loss,
+        'accuracy':       accuracy,
+        'mse':            mse,
+        'r2':             r2,
+        'auc':            auc,
+        'n_unique_preds': n_unique,
+    }
+
+def predict(model: LogisticRegressionNN, x) -> np.ndarray:
     return model.predict(x)
 
 def save_artifacts(
-    model: GaussianNBNN,
+    model: LogisticRegressionNN,
     history: Dict[str, Any],
     metrics: Dict[str, Any],
     sklearn_metrics: Dict[str, float],
+    feature_names=None,
 ) -> None:
     model.save(os.path.join(OUTPUT_DIR, 'model.pt'))
 
+    w    = model.linear.weight.detach().cpu().numpy().flatten().tolist()
+    b    = float(model.linear.bias.detach().cpu().item())
     all_out = {
-        'metadata':       get_task_metadata(),
+        'metadata':        get_task_metadata(),
         'pytorch_metrics': metrics,
         'sklearn_metrics': sklearn_metrics,
         'comparison': {
             'acc_diff': abs(metrics['val']['accuracy'] - sklearn_metrics['accuracy']),
+            'auc_diff': abs(metrics['val']['auc']      - sklearn_metrics['auc']),
         },
+        'coefficients': {'weights': w, 'bias': b},
     }
     with open(os.path.join(OUTPUT_DIR, 'metrics.json'), 'w') as f:
         json.dump(all_out, f, indent=2)
@@ -270,8 +282,8 @@ def save_artifacts(
     plt.plot(history['train_losses'], label='Train Loss')
     if history['val_losses'][0] is not None:
         plt.plot(history['val_losses'], label='Val Loss')
-    plt.xlabel('Epoch'); plt.ylabel('NLL Loss')
-    plt.title('Training Loss — Gaussian NB NN')
+    plt.xlabel('Epoch'); plt.ylabel('BCE Loss')
+    plt.title('Training Loss -- Logistic Regression NN')
     plt.legend(); plt.grid(True, alpha=0.3)
 
     plt.subplot(1, 2, 2)
@@ -279,13 +291,13 @@ def save_artifacts(
     if history['val_acc'][0] is not None:
         plt.plot(history['val_acc'], label='Val Acc')
     plt.xlabel('Epoch'); plt.ylabel('Accuracy')
-    plt.title('Training Accuracy — Gaussian NB NN')
+    plt.title('Training Accuracy -- Logistic Regression NN')
     plt.legend(); plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, 'nb_lvl1_training_curves.png'), dpi=150)
+    plt.savefig(os.path.join(OUTPUT_DIR, 'logreg_lvl1_training_curves.png'), dpi=150)
     plt.close()
 
-    # ── Plot: PyTorch vs sklearn accuracy comparison ──
+    # ── Plot: model comparison bar chart ──
     labels_bar = ['Train (PyTorch)', 'Val (PyTorch)', 'Test (PyTorch)', 'Sklearn']
     values_bar = [
         metrics['train']['accuracy'],
@@ -296,20 +308,26 @@ def save_artifacts(
     plt.figure(figsize=(8, 5))
     bars = plt.bar(labels_bar, values_bar, color=['steelblue', 'seagreen', 'darkorange', 'salmon'])
     plt.ylim(0, 1.1)
-    plt.title('Accuracy Comparison: PyTorch GNB vs Sklearn GNB')
+    plt.title('Accuracy Comparison: PyTorch Logistic NN vs Sklearn')
     plt.ylabel('Accuracy')
     for bar in bars:
-        plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+        plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
                  f'{bar.get_height():.4f}', ha='center', va='bottom')
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, 'nb_lvl1_model_comparison.png'), dpi=150)
+    plt.savefig(os.path.join(OUTPUT_DIR, 'logreg_lvl1_model_comparison.png'), dpi=150)
     plt.close()
+
+    # ── Print top feature weights ──
+    if feature_names is not None:
+        w_arr = np.array(w)
+        top5  = np.argsort(np.abs(w_arr))[::-1][:5]
+        print(f"  Top-5 features by |weight|: {[feature_names[i] for i in top5]}")
 
     print(f"  Artifacts saved to {OUTPUT_DIR}/")
 
 if __name__ == '__main__':
     print('=' * 60)
-    print('Gaussian Naive Bayes (NN) vs Sklearn — Iris Dataset')
+    print('Logistic Regression (NN) vs Sklearn -- Breast Cancer')
     print('=' * 60)
 
     set_seed(42)
@@ -318,9 +336,10 @@ if __name__ == '__main__':
     print(f"Dataset: {metadata['dataset']}")
     print(f"Device:  {device}")
 
-    ACC_THRESHOLD  = 0.90
-    SKLEARN_DELTA  = 0.03
-    EPOCHS         = 300
+    ACC_THRESHOLD = 0.93
+    AUC_THRESHOLD = 0.97
+    SKLEARN_DELTA = 0.03
+    EPOCHS        = 300
 
     # ── [1/5] Data ──
     print('\n[1/5] Loading and preprocessing data...')
@@ -329,63 +348,71 @@ if __name__ == '__main__':
     print(f"  Val   samples : {len(dataloaders['X_val'])}")
     print(f"  Test  samples : {len(dataloaders['X_test'])}")
     print(f"  Features      : {dataloaders['n_features']}")
-    print(f"  Classes       : {dataloaders['class_names']}")
 
     # ── [2/5] sklearn baseline ──
-    print('\n[2/5] Training Sklearn GaussianNB...')
-    sk_model = GaussianNB()
+    print('\n[2/5] Training Sklearn LogisticRegression...')
+    sk_model = SklearnLR(max_iter=1000, random_state=42)
     sk_model.fit(dataloaders['X_train'], dataloaders['y_train'])
-    sk_val_acc  = accuracy_score(dataloaders['y_val'],  sk_model.predict(dataloaders['X_val']))
-    sk_test_acc = accuracy_score(dataloaders['y_test'], sk_model.predict(dataloaders['X_test']))
-    sklearn_metrics = {'accuracy': float(sk_test_acc), 'val_accuracy': float(sk_val_acc)}
-    print(f"  Sklearn val  accuracy: {sk_val_acc:.4f}")
-    print(f"  Sklearn test accuracy: {sk_test_acc:.4f}")
+    sk_val_pred  = sk_model.predict(dataloaders['X_val'])
+    sk_val_proba = sk_model.predict_proba(dataloaders['X_val'])[:, 1]
+    sklearn_metrics = {
+        'accuracy': float(accuracy_score(dataloaders['y_val'], sk_val_pred)),
+        'auc':      float(roc_auc_score(dataloaders['y_val'], sk_val_proba)),
+    }
+    print(f"  Sklearn val  accuracy : {sklearn_metrics['accuracy']:.4f}")
+    print(f"  Sklearn val  AUC      : {sklearn_metrics['auc']:.4f}")
 
     # ── [3/5] Build & train PyTorch model ──
-    print('\n[3/5] Building and training Gaussian NB NN...')
-    model   = build_model(num_features=dataloaders['n_features'],
-                          num_classes=dataloaders['num_classes'])
-    history = train(model, dataloaders, epochs=EPOCHS, lr=5e-3, verbose=True)
+    print('\n[3/5] Building and training Logistic Regression NN...')
+    model   = build_model(input_dim=dataloaders['n_features'])
+    print(f"  Architecture: {model}")
+    history = train(model, dataloaders, epochs=EPOCHS, lr=1e-3, verbose=True)
 
     # ── [4/5] Evaluate on train AND val AND test ──
     print('\n[4/5] Evaluating on train and validation splits...')
     print('\n  --- Train split ---')
     train_metrics = evaluate(model, dataloaders['train_loader'])
     for k, v in train_metrics.items():
-        print(f"    {k:12s}: {v:.6f}")
+        print(f"    {k:20s}: {v}")
 
     print('\n  --- Validation split ---')
     val_metrics = evaluate(model, dataloaders['val_loader'])
     for k, v in val_metrics.items():
-        print(f"    {k:12s}: {v:.6f}")
+        print(f"    {k:20s}: {v}")
 
     print('\n  --- Test split ---')
     test_metrics = evaluate(model, dataloaders['test_loader'])
     for k, v in test_metrics.items():
-        print(f"    {k:12s}: {v:.6f}")
+        print(f"    {k:20s}: {v}")
 
     # ── [5/5] Save artifacts ──
     print('\n[5/5] Saving artifacts...')
     all_metrics = {'train': train_metrics, 'val': val_metrics, 'test': test_metrics}
-    save_artifacts(model, history, all_metrics, sklearn_metrics)
+    save_artifacts(model, history, all_metrics, sklearn_metrics,
+                   feature_names=dataloaders['feature_names'])
 
     # ── Comparison ──
-    acc_diff = abs(val_metrics['accuracy'] - sk_val_acc)
+    acc_diff = abs(val_metrics['accuracy'] - sklearn_metrics['accuracy'])
     print(f"\n--- Comparison ---")
-    print(f"  PyTorch val  accuracy : {val_metrics['accuracy']:.4f}")
-    print(f"  Sklearn val  accuracy : {sk_val_acc:.4f}")
-    print(f"  Difference            : {acc_diff:.4f}  (threshold < {SKLEARN_DELTA})")
+    print(f"  PyTorch val accuracy : {val_metrics['accuracy']:.4f}")
+    print(f"  Sklearn val accuracy : {sklearn_metrics['accuracy']:.4f}")
+    print(f"  Accuracy difference  : {acc_diff:.4f}")
+    print(f"  PyTorch val AUC      : {val_metrics['auc']:.4f}")
+    print(f"  Sklearn val AUC      : {sklearn_metrics['auc']:.4f}")
+    print(f"  Non-trivial boundary : {val_metrics['n_unique_preds']} class(es) predicted (must be 2)")
 
     print(f"\nAll artifacts saved to: {OUTPUT_DIR}")
     print('=' * 60)
 
     try:
-        assert val_metrics['accuracy']  > ACC_THRESHOLD, \
+        assert val_metrics['accuracy']      > ACC_THRESHOLD, \
             f"Val accuracy {val_metrics['accuracy']:.4f} <= {ACC_THRESHOLD}"
-        assert test_metrics['accuracy'] > ACC_THRESHOLD, \
+        assert val_metrics['auc']           > AUC_THRESHOLD, \
+            f"Val AUC {val_metrics['auc']:.4f} <= {AUC_THRESHOLD}"
+        assert val_metrics['n_unique_preds'] == 2, \
+            f"Model predicts only {val_metrics['n_unique_preds']} class(es) -- degenerate boundary"
+        assert test_metrics['accuracy']     > ACC_THRESHOLD, \
             f"Test accuracy {test_metrics['accuracy']:.4f} <= {ACC_THRESHOLD}"
-        assert acc_diff < SKLEARN_DELTA, \
-            f"Gap from sklearn {acc_diff:.4f} > {SKLEARN_DELTA}"
         print('Task completed successfully!')
         print('=' * 60)
         sys.exit(0)

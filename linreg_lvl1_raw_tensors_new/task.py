@@ -4,27 +4,7 @@ series  : Linear Regression (Neural Network edition)
 level   : 1
 algorithm: Linear Regression (nn.Linear, SGD, California Housing)
 
-Description:
-    Linear Regression implemented as a single nn.Linear layer (no activation),
-    trained with MSELoss and SGD + momentum. Dataset: California Housing.
-    Compared against sklearn LinearRegression. Demonstrates that a no-activation
-    single-layer NN IS linear regression.
-
-Math:
-    Model:      y_hat = W * x + b    (h_theta(x) = theta_0 + theta_1*x_1 + ... + theta_n*x_n)
-
-    MSE cost:   J(theta) = (1/N) * sum_i (y_hat_i - y_i)^2
-
-    Gradient descent update (SGD with momentum):
-        v     <- momentum * v + (1-momentum) * grad J(theta)
-        theta <- theta - lr * v
-
-    R^2 score:  R^2 = 1 - SS_res / SS_tot
-                SS_res = sum(y - y_hat)^2
-                SS_tot = sum(y - y_bar)^2
-
 Protocol: pytorch_task_v1
-Entrypoint: python tasks/linreg_lvl1_raw_tensors_new/task.py
 """
 
 import os
